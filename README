@@ -1,0 +1,5 @@
+This software was written by Anish Bhardwaj for performing Monte Carlo plus Molecular Dynamics 
+for the dipole-octupole spin 1/2 model on a pyrochlore lattice. It is based on a C++ code written by Hitesh Changlani 
+which does the same calculation but for a dipolar system.
+
+Additional scripts are available on request from Anish Bhardwaj (ab12k@my.fsu.edu).
