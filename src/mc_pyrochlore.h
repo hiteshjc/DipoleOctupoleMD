@@ -55,7 +55,17 @@ std::vector<double> eff_h_field(int &t,double &hx,double &hy,double &hz,std::vec
 //		   double disorder_strength,
 //		   double gxy, double gz); 
 
-void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat, 
+void mc_pyrochlore_get_thermal_config_and_time_evolve_no_replica(double spin, double deltat, 
+		   double omegamin, double omegamax, double omegaspacing, 
+		   double tottime, int L, int nstarts, int64_t nsamples, int64_t nburn, 
+		   string start_config, 
+		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
+		   double J1, double J2, double J3, double J4, double Jnnn,
+		   double disorder_strength,
+		   double gxy, double gz); 
+
+
+void mc_pyrochlore_get_thermal_config_and_time_evolve_with_replica(double spin, double deltat, 
 		   double omegamin, double omegamax, double omegaspacing, 
 		   double tottime, int L, int nstarts, int64_t nsamples, int64_t nburn, 
 		   string start_config, 

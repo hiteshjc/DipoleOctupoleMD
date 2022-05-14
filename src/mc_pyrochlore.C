@@ -1354,8 +1354,369 @@ std::vector<double> eff_h_field(int &t,double &hx,double &hy,double &hz,std::vec
 
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void mc_pyrochlore_get_thermal_config_and_time_evolve_with_replica(double spin, double deltat, 
+		   double omegamin, double omegamax, double omegaspacing, 
+		   double tottime, int L, int nstarts, int64_t nsamples, int64_t nburn, string start_config, 
+		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
+		   double J1, double J2, double J3, double J4, double Jnnn,
+		   double disorder_strength,
+		   double gxy, double gz) 
+{
+	STensor smunu, savg;
+	/////////////////////////////////////////////////////////////////////////
+	// MC related quantities
+	// Units - Assume J in meV (millielectron volts)
+        //         Assume h in T   (tesla)
+        //         Convert h to meV units in total_h_energy and local_h_energy
+        // Convert temperature in Kelvin to temperature in meV
+	// Set 16xLxLxL pyrochlore lattice
+	int nsites=16*L*L*L;
+       	double kB=1.38064852*1e-23;
+        double NA=6.02214179*1e23;
+        double JpermeV=1.60218*1e-22; 
+	double tempKelvin=temp;
+        temp=tempKelvin*0.0861733;
+ 
+	std::vector<double> omegas;
+	int numomegas=int(((omegamax-omegamin)/omegaspacing) + 1 + 1.0e-6);
+	for (int i=0;i<numomegas;i++) 
+	{
+		double omega=omegamin+(double(i)*omegaspacing);
+		omegas.push_back(omega);
+	}
+	/////////////////////////////////////////////////////////////////////////
+	// J and g matrices
+	
+	RMatrix Jmat01,Jmat02,Jmat03,Jmat12,Jmat13,Jmat23;
+	RMatrix Jmat10,Jmat20,Jmat30,Jmat21,Jmat31,Jmat32;
+	RMatrix Jnmat01,Jnmat02,Jnmat03,Jnmat12,Jnmat13,Jnmat23;
+	RMatrix Jnmat10,Jnmat20,Jnmat30,Jnmat21,Jnmat31,Jnmat32;
+	RMatrix gmat0,gmat1,gmat2,gmat3;
+        RMatrix R0,R1,R2,R3;	
+        RMatrix bond_disorder_matrix(nsites,nsites);
+	// Given J1, J2, J3, J4 - make J mats 
+	make_J_mats(J1,J2,J3,J4,Jmat01,Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, Jmat13, Jmat31, Jmat23, Jmat32);
+	make_Jn_mats(Jnnn,gxy,gz,Jnmat01,Jnmat10, Jnmat02, Jnmat20, Jnmat03, Jnmat30, Jnmat12, Jnmat21, Jnmat13, Jnmat31, Jnmat23, Jnmat32);
+	// Given g's - make g mats 
+	make_g_mats(gxy,gz,gmat0,gmat1,gmat2,gmat3);
+	make_R_mats(R0,R1,R2,R3);
+	std::vector<RMatrix> gmats,Rmats;
+	Rmats.push_back(R0);Rmats.push_back(R1);Rmats.push_back(R2);Rmats.push_back(R3);
+	gmats.push_back(gmat0);gmats.push_back(gmat1);gmats.push_back(gmat2);gmats.push_back(gmat3);
+
+	/////////////////////////////////////////////////////////////////////////
+	// MC related quantities
+	// Set nburn
+	nburn=nsamples;
+	cout<<"Nsamples = "<<nsamples<<endl;
+	cout<<"Nburn    = "<<nburn<<endl;
+	double e4avg,mx4avg,my4avg,mz4avg;
+	
+	/////////////////////////////////////////////////////////////////////////
+	// Set 16xLxLxL pyrochlore lattice
+	std::vector< std::vector<int> > neighbors(nsites);	
+	std::vector< std::vector<int> > nneighbors(nsites);	
+	std::vector< std::vector<double> > fullcoords;	
+	std::vector< std::vector<int> > ijkt;	
+       
+	//////////////////////////////////////
+	// Make pyrochlore lattice 
+	time_t start,end; 
+	time (&start);	
+        make_pyrochlore(L,fullcoords,ijkt,neighbors,nneighbors,false);
+	// Make disorder matrix to be added to the Heisenberg couplings 
+	make_bond_disorder_matrix(disorder_strength,neighbors,bond_disorder_matrix);
+	time (&end);	
+	double seconds=difftime(end,start);
+    	cout<<"Time to make pyrochlore = "<<seconds<<" seconds"<<endl;
+	time (&start);	
+	//////////////////////////////////////
+	
+	
+	/////////////////////////////////////
+	// Make phases and q values	
+	std::vector<std::vector<double> > qvals;
+	make_qs(L,qvals);
+	int numqs=qvals.size();
+	Matrix phases;
+	make_phases(fullcoords, qvals,phases);
+	time (&end);	
+	seconds=difftime(end,start);
+    	cout<<"Time to make q, phases = "<<seconds<<" seconds"<<endl;
+	/////////////////////////////////////
+
+	for (int nstart=0;nstart<nstarts;nstart++) //nstarts loop // Number of times i.e. starts to run MC - for each one do Runge Kutta time evolution
+	{	
+		time(&start);
+		/////////////////////////////////////////////////////////////////////////
+		// Make random configuration of spins or selected type 
+		double nreplicatries=0.0;
+		ntemps=50;
+		std::vector<QMC_Info> infos;
+		cout<<"Ntemps   = "<<ntemps<<endl;
+		double exponent=pow(100.0,1.0/double(ntemps)); // Tmax/Tmin approx 100
+		cout<<"exponent = "<<exponent<<endl;
+		for (int b=0;b<ntemps;b++)
+		{
+			QMC_Info qmc;
+			qmc.init(L,nsites,tempKelvin*pow(exponent,double(b)),false);
+			infos.push_back(qmc);
+			cout<<"Beta = "<<infos[b].beta<<endl;
+			if (start_config=="random") make_random_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
+			if (start_config=="111")    make_111_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
+			if (start_config=="x")      make_x_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz);
+		}
+
+		for (int b=0;b<ntemps;b++) //Initialize
+		{
+			//if (measure_corrs) correlations(spin,configx,configy,configz,sxsxcorrs,sysycorrs,szszcorrs,sxsycorrs,sxszcorrs,syszcorrs);
+			double 		    energyj=total_j_energy(spin, infos[b].configx,infos[b].configy,infos[b].configz,
+									 neighbors,nneighbors,
+									 Jmat01, Jmat10, 
+									 Jmat02, Jmat20, 
+									 Jmat03, Jmat30, 
+									 Jmat12, Jmat21, 
+									 Jmat13, Jmat31, 
+									 Jmat23, Jmat32,
+									 Jnmat01, Jnmat10,
+                                                                         Jnmat02, Jnmat20,
+                                                                         Jnmat03, Jnmat30,
+                                                                         Jnmat12, Jnmat21,
+                                                                         Jnmat13, Jnmat31,
+                                                                         Jnmat23, Jnmat32, Jnnn, bond_disorder_matrix, ijkt);
+			double 		    energyh=total_h_energy(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
+								   hx,hy,hz, gmats , ijkt);
+			std::vector<double> magnetization=total_magnetization(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
+									      gmats, ijkt);
+			infos[b].energy=energyj+energyh;
+			infos[b].mx=magnetization[0];infos[b].my=magnetization[1];infos[b].mz=magnetization[2];
+			cout<<"Total J energy                  ="<<energyj<<endl;
+			cout<<"Total h energy                  ="<<energyh<<endl;
+			cout<<"Total J energy + total h energy ="<<infos[b].energy<<endl;
+			cout<<"Total magnetization is          ="<<endl; print_vec_acc(magnetization,true);
+	        } // End initialize
+
+		for (int n=0; n< (nburn + nsamples) ; n++)  // n loop
+		{
+		   	if (n%nsites==0 or ntemps==1) // Do usual Metropolis MC
+		   	{
+			///////////////////////////////////////////////////////////////////////
+			// Usual Moves of a serial Metropolis Monte Carlo
+			///////////////////////////////////////////////////////////////////////
+			std::vector<double> rnd1,rnd2,rnd3,rnd4;
+			std::vector<int> rndints;
+			// random numbers generated in advance
+			for (int b=0;b<ntemps;b++) //begin random numbers
+			{
+				bool cond=false;
+				double r1,r2,d1,d2;
+				while (cond==false) // Problem if fixed random numbers given !!!!!!!!!
+				{
+					r1=uniform_rnd();
+					r2=uniform_rnd();
+					d1=(2.0*r1 - 1);	
+					d2=(2.0*r2 - 1);	
+					if (d1*d1 + d2*d2 <=1.0) cond=true; 
+				}
+				rnd1.push_back(r1);
+				rnd2.push_back(r2);
+				// First 2 rnds are drawn in a circle for the conical move to work
+				rnd3.push_back(uniform_rnd());
+				rnd4.push_back(uniform_rnd());
+				rndints.push_back(uniform_rand_int(0,nsites));
+			} // end random number generation
+
+			# pragma omp parallel for
+			for (int b=0;b<ntemps;b++) //b loop //move at each temperature
+			{
+					// Very Small moves needed at low temperatures to increase acceptance rates
+					double move_size=0.2;  
+					// Choose random site
+					int site=rndints[b];
+					int t=ijkt[site][3];
+					double sxnew,synew,sznew;
+					// Current sx,sy,sz on chosen site
+					double sx=infos[b].configx[site];double sy=infos[b].configy[site];double sz=infos[b].configz[site];						// Choose a completely random direction - This is INEFFICENT at low temps
+					//if (mcmove=="random")  random_move_continuous_spin(sxnew,synew,sznew);
+					// Choose a completely random direction within a cone
+					if (mcmove=="conical") conical_move_continuous_spin_rnds_provided(move_size,rnd1[b],rnd2[b],sx,sy,sz,sxnew,synew,sznew);
+					//if (mcmove=="infDspecial")    infD_move_special_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
+					/*if (mcmove=="largeD")
+					{
+						double tempnum=rnd1[b];
+						if (tempnum>0.5) conical_move_continuous_spin(move_size,sx,sy,sz,sxnew,synew,sznew);
+						else	         big_move_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
+					}*/	
+					// Normalize new direction
+					double norm=sqrt(sxnew*sxnew + synew*synew + sznew*sznew); 
+					sxnew=sxnew/norm; synew=synew/norm; sznew=sznew/norm;
+	
+					// Calculate local energy of old and new configs
+					double eff_field_x, eff_field_y, eff_field_z;
+					local_j_energy(spin, site,t,sx,sy,sz,
+				        infos[b].configx,infos[b].configy,infos[b].configz, 
+				        neighbors, nneighbors,
+				        Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
+				        Jmat13,Jmat31, Jmat23, Jmat32,Jnmat01,Jnmat10, Jnmat02,Jnmat20, Jnmat03, Jnmat30, Jnmat12, Jnmat21,
+                		        Jnmat13,Jnmat31, Jnmat23, Jnmat32, Jnnn, bond_disorder_matrix, ijkt,
+				        eff_field_x, eff_field_y,eff_field_z);
+					/*local_j_energy(spin, site,t,sx,sy,sz,
+						       infos[b].configx,infos[b].configy,infos[b].configz, 
+						       neighbors, nneighbors,
+						       Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
+						       Jmat13,Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt,
+						       eff_field_x, eff_field_y,eff_field_z);*/
+					double local_energyj1=( (sx*eff_field_x) + (sy*eff_field_y)+ (sz*eff_field_z))*spin*spin; 
+					double local_energyj2=( (sxnew*eff_field_x) + (synew*eff_field_y)+ (sznew*eff_field_z))*spin*spin; 
+					double mxdiff=(sxnew-sx)*spin;	
+					double mydiff=(synew-sy)*spin;
+					double mzdiff=(sznew-sz)*spin;
+							// Jterms                        // hterms - no field for now
+					double ediff=(local_energyj2-local_energyj1); //+ (local_energyh2-local_energyh1);
+					double beta; 
+					beta=infos[b].beta;
+					double prob=exp(-beta*ediff);
+					double rand=rnd3[b]; // random number previously generated
+					if (rand<prob) // Metropolis Accept-reject for a given temperature
+					{
+						if (n>(nburn)) infos[b].accept=infos[b].accept+1.0;
+						// Reset configs to new configs, because accepted
+						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
+						infos[b].energy+=ediff;
+					}
+					else
+					{
+						if (n>(nburn)) infos[b].reject=infos[b].reject+1.0;
+						// Still move spin if rejected, but this conserves energy!!
+						double norm=(eff_field_x*eff_field_x)+(eff_field_y*eff_field_y)+(eff_field_z*eff_field_z);
+						norm=sqrt(norm);
+						eff_field_x=eff_field_x/norm;
+						eff_field_y=eff_field_y/norm;
+						eff_field_z=eff_field_z/norm;
+						double costheta=(sx*eff_field_x)+(sy*eff_field_y)+(sz*eff_field_z);
+						double sintheta=sqrt(1.0-(costheta*costheta));	
+						double phi=rnd4[b]*2.0*3.14159; // random in range 0 to 2 pi 
+										// random number previously generated
+						double x1,y1,z1, x2,y2,z2;	
+						get_two_normalized_orth_dirs(eff_field_x, eff_field_y, eff_field_z, 
+									     x1, y1, z1, 
+									     x2, y2, z2);
+						double sxnew=(costheta*eff_field_x)  + (sintheta*cos(phi)*x1)+ (sintheta*sin(phi)*x2);
+						double synew=(costheta*eff_field_y)  + (sintheta*cos(phi)*y1)+ (sintheta*sin(phi)*y2);
+						double sznew=(costheta*eff_field_z)  + (sintheta*cos(phi)*z1)+ (sintheta*sin(phi)*z2);
+						double mxdiff=(sxnew-sx)*spin;	
+						double mydiff=(synew-sy)*spin;
+						double mzdiff=(sznew-sz)*spin;
+						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
+						// ediff=0 by construction!!
+					}
+			} //end b loop
+			} //end usual Metropolis
+			else if (ntemps>1) //begin else  //replica exchange
+			{
+				nreplicatries+=1.0;	
+				///////////////////////////////////////////////////////////////////////
+				////////// Attempted exchange moves of parallel tempering
+				///////////////////////////////////////////////////////////////////////
+				
+				for (int which1=0;which1<ntemps;which1++) //which loop
+				{
+					int which2=(which1+1)%(ntemps);
+					// Slight bias, if i try to swap serially ?
+					double rand=uniform_rnd();	
+					double beta_i=infos[which1].beta;
+					double beta_j=infos[which2].beta;
+					double energy_i=infos[which1].energy;
+					double energy_j=infos[which2].energy;
+					double power=(beta_j-beta_i)*(energy_i - energy_j);
+					double ratio=exp(-power);
+					if (rand<ratio)
+					{
+						// SWAP quantities which are being saved
+						std::vector<double> tempv;
+						double temp_energy, temp_mx, temp_my, temp_mz;
+						tempv=infos[which1].configx;	
+						infos[which1].configx=infos[which2].configx;	
+						infos[which2].configx=tempv;	
+						
+						tempv=infos[which1].configy;	
+						infos[which1].configy=infos[which2].configy;	
+						infos[which2].configy=tempv;	
+			
+						tempv=infos[which1].configz;	
+						infos[which1].configz=infos[which2].configz;	
+						infos[which2].configz=tempv;	
+						
+						temp_energy=infos[which1].energy;	
+						infos[which1].energy=infos[which2].energy;	
+						infos[which2].energy=temp_energy;	
+						
+						/*temp_mx=infos[which1].mx;	
+						infos[which1].mx=infos[which2].mx;	
+						infos[which2].mx=temp_mx;	
+						
+						temp_my=infos[which1].my;	
+						infos[which1].my=infos[which2].my;	
+						infos[which2].my=temp_my;	
+						
+						temp_mz=infos[which1].mz;	
+						infos[which1].mz=infos[which2].mz;	
+						infos[which2].mz=temp_mz;*/
+						infos[which1].nswaps+=1.0;	
+						infos[which2].nswaps+=1.0;	
+						//nswaps+=1.0;	
+					}
+				} //end which loop
+			} //end else
+			if (n%nsites==0) cout<<infos[0].energy<<endl;
+	        }   //n loop		
+		
+		cout<<"========================================================"<<endl;
+		cout<<endl<<" "<<"end MC sampling"<<endl;
+		time_evolve(spin, deltat, tottime, L,hx,hy,hz,infos[0].configx,infos[0].configy,infos[0].configz,neighbors, 
+		      nneighbors, Jmat01, Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, Jmat13, Jmat31, Jmat23, Jmat32, Jnmat01, Jnmat10, Jnmat02, Jnmat20, Jnmat03, Jnmat30, Jnmat12, Jnmat21, Jnmat13, Jnmat31, Jnmat23, Jnmat32, Jnnn, bond_disorder_matrix, gmats,Rmats, fullcoords, ijkt, qvals, phases, omegas, smunu);
+	     
+                // time_evolve(spin, deltat, tottime, L, infos[0].configx,infos[0].configy,infos[0].configz,neighbors, 
+		//      nneighbors, Jmat01, Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
+	        //      Jmat13, Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, gmats, fullcoords, ijkt, qvals, phases, omegas, smunu);
+	     
+                if (nstart>0) savg.update_totals(smunu);
+		else	 { savg.init(int(smunu.qvals.size()),numomegas); savg.copy(smunu);}
+		time(&end);
+		double seconds=difftime(end,start);
+		cout<<"Done with run "<<nstart<<" in  "<<seconds<<" seconds"<<endl;
+		cout<<"======================================================================================================================================="<<endl;
+		cout<<endl;
+        }  // End nstarts
+	
+        savg.average();
+	for (int om=0; om<numomegas;om++)
+	{   
+		cout<<"======================================================================================================================================="<<endl;
+		cout<<"                                              AVERAGED DATA for omega = "<<omegas[om]<<"                                               "<<endl;
+		cout<<"======================================================================================================================================="<<endl;
+		cout<<" h      k      l     SXX(Q)    SXY(Q)    SXZ(Q)    SYX(Q)     SYY(Q)     SYZ(Q)     SZX(Q)     SZY(Q)     SZZ(Q)          Sperp(Q)     "<<endl;
+		cout<<"======================================================================================================================================="<<endl;
+		for (int i=0;i<numqs;i++)
+		{
+			double pi=3.14159265358979; // Normalization of T/pi - see HJC notes on Dropbox
+			double qx=savg.qvals[i][0];double qy=savg.qvals[i][1];double qz=savg.qvals[i][2];
+			complex<double> sxx=savg.sxx[om][i]*(tottime/pi);complex<double> syy=savg.syy[om][i]*(tottime/pi);complex<double> szz=savg.szz[om][i]*(tottime/pi);
+			complex<double> sxy=savg.sxy[om][i]*(tottime/pi);complex<double> syx=savg.syx[om][i]*(tottime/pi);
+			complex<double> sxz=savg.sxz[om][i]*(tottime/pi);complex<double> szx=savg.szx[om][i]*(tottime/pi);
+			complex<double> syz=savg.syz[om][i]*(tottime/pi);complex<double> szy=savg.szy[om][i]*(tottime/pi);
+			complex<double> sperp=savg.sperp[om][i]*(tottime/pi);
+			
+			cout<<boost::format("%+ .5f  %+ .5f  %+ .5f  %+ .8f   %+ .8f   %+ .8f   %+ .8f   %+ .8f   %+ .8f  %+ .8f  %+ .8f %+ .8f  %+ .8f") %qx %qy %qz %sxx %sxy %sxz %syx %syy %syz %szx %szy %szz %sperp<<endl;
+		 }				
+	 }
+
+}
+
+
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat, 
+void mc_pyrochlore_get_thermal_config_and_time_evolve_no_replica(double spin, double deltat, 
 		   double omegamin, double omegamax, double omegaspacing, 
 		   double tottime, int L, int nstarts, int64_t nsamples, int64_t nburn, string start_config, 
 		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 

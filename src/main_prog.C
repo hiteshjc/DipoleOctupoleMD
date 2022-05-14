@@ -206,10 +206,11 @@ int main(int argc, char *argv[])
     cout<<"Tot-time (meV)^-1   	= "<<tottime<<endl;
     if (nreplicas==1)
     {   // serial MC 
-    	mc_pyrochlore_get_thermal_config_and_time_evolve(spin, deltat, omegamin, omegamax, omegaspacing, tottime, L, nstarts, nsamples,nburn,start_config,mcmove,temp,nreplicas, hx,hy,hz,J1,J2,J3,J4,Jnnn,disorder_strength,gxy,gz);
+    	mc_pyrochlore_get_thermal_config_and_time_evolve_no_replica(spin, deltat, omegamin, omegamax, omegaspacing, tottime, L, nstarts, nsamples,nburn,start_config,mcmove,temp,nreplicas, hx,hy,hz,J1,J2,J3,J4,Jnnn,disorder_strength,gxy,gz);
     }
     else
     {   // replica MC
+    	mc_pyrochlore_get_thermal_config_and_time_evolve_with_replica(spin, deltat, omegamin, omegamax, omegaspacing, tottime, L, nstarts, nsamples,nburn,start_config,mcmove,temp,nreplicas, hx,hy,hz,J1,J2,J3,J4,Jnnn,disorder_strength,gxy,gz);
     	//mc_pyrochlore_get_thermal_config_from_replica_and_time_evolve(spin, deltat, omegamin, omegamax, omegaspacing, tottime, L, nstarts, nsamples,nburn,start_config,mcmove,temp,nreplicas, hx,hy,hz,J1,J2,J3,J4,Jnnn,disorder_strength,gxy,gz);
     }
 }
